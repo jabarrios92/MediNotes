@@ -9,6 +9,7 @@ import { URL } from "url";
 import pdfmake from "pdfmake";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
+import ytdl from "@distube/ytdl-core";
 
 const ffmpegPath = ffmpegStatic as unknown as string;
 if (ffmpegPath) {
@@ -208,15 +209,14 @@ function generatePDFWithImages(
   });
 }
 
-
-  pdfmake.setFonts({
-    Helvetica: {
-      normal: "Helvetica",
-      bold: "Helvetica-Bold",
-      italics: "Helvetica-Oblique",
-      bolditalics: "Helvetica-BoldOblique",
-    },
-  });
+pdfmake.setFonts({
+  Helvetica: {
+    normal: "Helvetica",
+    bold: "Helvetica-Bold",
+    italics: "Helvetica-Oblique",
+    bolditalics: "Helvetica-BoldOblique",
+  },
+});
 
 function generateSlidesPDF(
   markdownText: string,
@@ -446,6 +446,86 @@ app.post(
 );
 
 app.post(
+  "/api/upload/youtube",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { youtubeUrl, mode } = req.body;
+
+      if (!youtubeUrl) {
+        res.status(400).json({ error: "Missing YouTube URL" });
+        return;
+      }
+
+      if (!process.env.GEMINI_API_KEY) {
+        res.status(500).json({ error: "Gemini API key is not set." });
+        return;
+      }
+
+      if (!ytdl.validateURL(youtubeUrl)) {
+        res.status(400).json({ error: "Invalid YouTube URL" });
+        return;
+      }
+
+      const uploadId =
+        Date.now().toString() +
+        "-" +
+        Math.random().toString(36).substring(2, 9);
+      const finalFileName = `${uploadId}-youtube.mp4`;
+      const finalPath = path.join(uploadDir, finalFileName);
+
+      const jobId =
+        Date.now().toString() +
+        "-" +
+        Math.random().toString(36).substring(2, 9);
+      jobs.set(jobId, { status: "pending" });
+
+      res.json({ complete: true, jobId });
+
+      // Download file from YouTube and process in background
+      (async () => {
+        try {
+          jobs.set(jobId, { status: "uploading_to_gemini" });
+          console.log(`[${jobId}] Downloading from YouTube: ${youtubeUrl}`);
+
+          const videoStream = ytdl(youtubeUrl, {
+            quality: "highest",
+            filter: "audioandvideo",
+          });
+
+          const fileStream = fs.createWriteStream(finalPath);
+          videoStream.pipe(fileStream);
+
+          await new Promise((resolve, reject) => {
+            fileStream.on("finish", () => resolve(undefined));
+            videoStream.on("error", reject);
+            fileStream.on("error", reject);
+          });
+
+          console.log(
+            `[${jobId}] Downloaded from YouTube. Starting Gemini Analysis...`,
+          );
+          startGeminiAnalysis(jobId, finalPath, "video/mp4", mode);
+        } catch (err: any) {
+          console.error(`[${jobId}] Error downloading from YouTube:`, err);
+          jobs.set(jobId, {
+            status: "error",
+            error: err.message || "YouTube download failed",
+          });
+          if (fs.existsSync(finalPath)) {
+            fs.unlinkSync(finalPath);
+          }
+        }
+      })();
+    } catch (err: any) {
+      console.error("YouTube processing initialization error:", err);
+      res
+        .status(500)
+        .json({ error: "Failed to initialize YouTube processing" });
+    }
+  },
+);
+
+app.post(
   "/api/upload/chunk",
   upload.single("chunk"),
   async (req: Request, res: Response): Promise<void> => {
@@ -649,6 +729,7 @@ async function startGeminiAnalysis(
   }
 }
 
+app.use("/api/status", (req, res, next) => { console.log("STATUS REQ:", req.method, req.url); next(); });
 app.get("/api/status/:jobId", (req: Request, res: Response): void => {
   const job = jobs.get(req.params.jobId);
   if (!job) {

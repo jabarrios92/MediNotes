@@ -13,9 +13,7 @@ const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
 provider.addScope("https://www.googleapis.com/auth/drive.readonly");
-provider.setCustomParameters({
-  prompt: "consent",
-});
+// No forced consent prompt, let Google remember it if already granted.
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;

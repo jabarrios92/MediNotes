@@ -26,18 +26,21 @@ interface VideoMetadata {
   size?: number;
 }
 
-
 const safeJson = async (res: Response, endpoint: string) => {
   const text = await res.text();
   try {
     return JSON.parse(text);
   } catch (e) {
-    console.error("Invalid JSON from " + endpoint + ":", text.substring(0, 100));
+    console.error(
+      "Invalid JSON from " + endpoint + ":",
+      text.substring(0, 100),
+    );
     throw new Error("Invalid JSON from " + endpoint + ". HTML returned?");
   }
 };
 
 export default function App() {
+  const [youtubeUrl, setYoutubeUrl] = useState<string>("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [driveFile, setDriveFile] = useState<
     | ({
@@ -268,7 +271,19 @@ export default function App() {
         throw new Error("Failed to fetch job status");
       }
 
-      const data = await safeJson(response, "status");
+      
+      let data;
+      try {
+        data = await safeJson(response, "status");
+      } catch (e: any) {
+        if (e.message && e.message.includes("HTML returned")) {
+          console.warn("Got HTML instead of JSON, server might be restarting. Retrying in 5 seconds...");
+          setTimeout(() => pollJobStatus(jobId), 5000);
+          return;
+        }
+        throw e;
+      }
+  
 
       if (data.status === "error") {
         setError(
@@ -323,9 +338,9 @@ export default function App() {
   };
 
   const handleSubmit = async () => {
-    if (!videoFile && !driveFile) {
+    if (!videoFile && !driveFile && !youtubeUrl) {
       setError(
-        "Please select a video file or choose one from Google Drive to upload.",
+        "Please select a video file, choose one from Google Drive, or provide a YouTube URL.",
       );
       return;
     }
@@ -340,7 +355,20 @@ export default function App() {
     try {
       let jobId = null;
 
-      if (driveFile) {
+      if (youtubeUrl) {
+        setStatusText("Requesting YouTube processing...");
+        setProgress(10);
+        const ytRes = await fetch("/api/upload/youtube", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ youtubeUrl, mode }),
+        });
+
+        if (!ytRes.ok) throw new Error("Failed to start YouTube processing");
+        const ytData = await safeJson(ytRes, "youtube");
+        jobId = ytData.jobId;
+        setProgress(50);
+      } else if (driveFile) {
         setStatusText("Requesting Drive upload...");
         setProgress(10);
         const driveRes = await fetch("/api/upload/drive", {
@@ -497,10 +525,50 @@ export default function App() {
             )}
           </div>
 
-          {!videoFile && !driveFile && (
-            <div className="mt-4 flex flex-col items-center justify-center">
-              <div className="text-sm text-slate-400 mb-4 divider">OR</div>
+          {!videoFile && !driveFile && !youtubeUrl && (
+            <div className="mt-4 flex flex-col items-center justify-center space-y-4">
+              <div className="text-sm text-slate-400 divider w-full text-center relative">
+                <span className="bg-white px-2 relative z-10">OR</span>
+                <div className="absolute top-1/2 left-0 w-full h-px bg-slate-200 -z-10"></div>
+              </div>
+
+              <div className="w-full flex flex-col space-y-2">
+                <label className="text-sm font-medium text-slate-700 text-left">
+                  YouTube URL
+                </label>
+                <div className="flex space-x-2">
+                  <input
+                    type="url"
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
+                  />
+                </div>
+              </div>
+
+              <div className="text-sm text-slate-400 divider w-full text-center relative">
+                <span className="bg-white px-2 relative z-10">OR</span>
+                <div className="absolute top-1/2 left-0 w-full h-px bg-slate-200 -z-10"></div>
+              </div>
               <GoogleDriveUpload onFileSelected={handleDriveFileSelected} />
+            </div>
+          )}
+
+          {youtubeUrl && !videoFile && !driveFile && (
+            <div className="mt-4 flex flex-col items-center justify-center p-4 border rounded-xl bg-red-50 border-red-200">
+              <div className="text-sm font-medium text-red-700">
+                YouTube Video Selected
+              </div>
+              <div className="text-xs text-red-600 mt-1 truncate max-w-xs">
+                {youtubeUrl}
+              </div>
+              <button
+                onClick={() => setYoutubeUrl("")}
+                className="mt-3 text-xs text-red-500 hover:text-red-700 font-medium"
+              >
+                Clear URL
+              </button>
             </div>
           )}
 

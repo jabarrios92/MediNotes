@@ -83,7 +83,9 @@ export function GoogleDriveUpload({ onFileSelected }: GoogleDriveUploadProps) {
 
     const view = new (window as any).google.picker.DocsView(
       (window as any).google.picker.ViewId.DOCS,
-    ).setMimeTypes("video/mp4,video/webm,video/quicktime,video/x-msvideo");
+    )
+      .setIncludeFolders(true)
+      .setMimeTypes("video/mp4,video/webm,video/quicktime,video/x-msvideo");
 
     const picker = new (window as any).google.picker.PickerBuilder()
       .addView(view)
